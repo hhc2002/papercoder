@@ -84,6 +84,12 @@ python -m papercoder.main "arxiv:2502.09992" --no-judge
 - `*_review.md` — 结构化综述（1500-2500字）+ Mermaid 流程图 + GitHub 开源引用
 - `*_code.py` — Python 代码骨架（含类型注解和 TODO 注释）
 
+**示例输出：**
+| 论文 | 综述 | 代码 |
+|------|------|------|
+| Attention Is All You Need | [review.md](papercoder/output/Attention%20Is%20All%20You%20Need_review.md) | [code.py](papercoder/output/Attention%20Is%20All%20You%20Need_code.py) |
+| LLaDA-V (arxiv:2502.09992) | [review.md](papercoder/output/arxiv_2502_09992_review.md) | [code.py](papercoder/output/arxiv_2502_09992_code.py) |
+
 ---
 
 ## 本地 PDF RAG

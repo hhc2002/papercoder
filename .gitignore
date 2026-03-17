@@ -22,7 +22,6 @@ papercoder/memory_store/
 papercoder/papers/
 
 # 输出（用户生成结果）
-papercoder/output/
 
 # macOS
 .DS_Store
@@ -37,3 +36,5 @@ papercoder/output/
 langchain_cache/
 papers/
 *.code-workspace
+方案_v3.md
+方案_v4.md

@@ -84,6 +84,12 @@ Output is saved to `papercoder/output/`:
 - `*_review.md` — structured review (1500–2500 words) + Mermaid flowchart + GitHub refs
 - `*_code.py` — Python code skeleton with type annotations and TODO comments
 
+**Example outputs:**
+| Paper | Review | Code |
+|-------|--------|------|
+| Attention Is All You Need | [review.md](papercoder/output/Attention%20Is%20All%20You%20Need_review.md) | [code.py](papercoder/output/Attention%20Is%20All%20You%20Need_code.py) |
+| LLaDA-V (arxiv:2502.09992) | [review.md](papercoder/output/arxiv_2502_09992_review.md) | [code.py](papercoder/output/arxiv_2502_09992_code.py) |
+
 ---
 
 ## Local PDF RAG
