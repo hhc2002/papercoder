@@ -64,7 +64,7 @@ def get_llm():
     errors = []
     for fn in order:
         try:
-            return fn(temperature=0.1, max_tokens=8192)
+            return fn(temperature=0.1, max_tokens=16384)
         except Exception as e:
             errors.append(f"{fn.__name__}: {e}")
 

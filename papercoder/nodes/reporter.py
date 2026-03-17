@@ -5,6 +5,7 @@ Reporter Node — 生成最终三件套输出
 3. 代码骨架（带 GitHub 开源对比）
 同时将本次研究写入 FAISS 长期记忆
 """
+import re
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from ..state import PaperCoderState
@@ -92,8 +93,8 @@ def reporter_node(state: PaperCoderState) -> dict:
     # ── 整理 GitHub 引用（格式化为 Markdown）─────────────────────
     github_md = _format_github_refs(github_refs)
 
-    # ── 整理代码（提取 Python 代码块部分）────────────────────────
-    code_output = f"# PaperCoder — {query}\n\n{code_draft}"
+    # ── 整理代码（提取纯 Python，去除 markdown 包裹）──────────────
+    code_output = f"# PaperCoder — {query}\n\n{_extract_python_code(code_draft)}"
 
     # ── 构建最终三件套 ────────────────────────────────────────────
     final_output = {
@@ -123,6 +124,30 @@ def reporter_node(state: PaperCoderState) -> dict:
     print(f"\n{'='*60}\n✅ PaperCoder 分析完成！\n{'='*60}")
 
     return {"final_output": final_output}
+
+
+def _extract_python_code(code_draft: str) -> str:
+    """从 LLM 响应中提取纯 Python 代码，去除 markdown 代码块标记和前言文字"""
+    # 优先提取 ```python ... ``` 代码块
+    match = re.search(r'```python\s*(.*?)\s*```', code_draft, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    # 其次提取 ``` ... ``` 代码块（无语言标记）
+    match = re.search(r'```\s*(.*?)\s*```', code_draft, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    # 无完整代码块：跳过开头非代码行，去除结尾残留的 ```
+    lines = code_draft.strip().splitlines()
+    start = 0
+    for i, line in enumerate(lines):
+        if line.strip().startswith(("import ", "from ", "def ", "class ", "#", "@")):
+            start = i
+            break
+    result_lines = lines[start:]
+    # 去除结尾的 ``` 行
+    while result_lines and result_lines[-1].strip() in ("```", "```python", "```py"):
+        result_lines.pop()
+    return "\n".join(result_lines).strip()
 
 
 def _format_github_refs(github_refs: list) -> str:

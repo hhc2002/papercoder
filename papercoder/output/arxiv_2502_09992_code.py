@@ -1,634 +1,575 @@
 # PaperCoder — arxiv:2502.09992
 
-```python
-# pip install torch transformers
+# pip install torch numpy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import List, Tuple, Dict, Any, Optional
+import numpy as np
+from typing import List, Tuple, Dict, Any
 
-# Define a placeholder for the masked token
-MASK_TOKEN = -1  # Assuming token IDs are non-negative integers
-
+# Placeholder for the masked predictor model
 class MaskedPredictor(nn.Module):
-    """
-    A Transformer-based masked token predictor for LLaDA.
-    This model is parameterized as p_theta(x_t | x_t) in the paper.
-    """
-    def __init__(self, vocab_size: int, d_model: int, nhead: int, num_layers: int, dim_feedforward: int, dropout: float = 0.1):
-        """
-        Initializes the MaskedPredictor.
-
-        Args:
-            vocab_size: The size of the vocabulary.
-            d_model: The dimension of the model's embeddings.
-            nhead: The number of attention heads in the Transformer encoder.
-            num_layers: The number of Transformer encoder layers.
-            dim_feedforward: The dimension of the feedforward network model in Transformer encoder layers.
-            dropout: The dropout probability.
-        """
+    def __init__(self, vocab_size: int, hidden_size: int, num_layers: int):
         super().__init__()
+        # TODO: Define the architecture of the masked predictor
+        # This could be a Transformer-based model
+        self.embedding = nn.Embedding(vocab_size, hidden_size)
+        self.transformer_layers = nn.ModuleList([
+            nn.TransformerEncoderLayer(d_model=hidden_size, nhead=8) for _ in range(num_layers)
+        ])
+        self.lm_head = nn.Linear(hidden_size, vocab_size)
         self.vocab_size = vocab_size
-        self.d_model = d_model
 
-        self.token_embedding = nn.Embedding(vocab_size, d_model)
-        self.positional_encoding = nn.Embedding(512, d_model) # Assuming a max sequence length of 512 for positional encoding
-        self.transformer_encoder = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, dropout=dropout, batch_first=True),
-            num_layers=num_layers
-        )
-        self.fc_out = nn.Linear(d_model, vocab_size)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x_t: torch.Tensor, attention_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, x_t: torch.Tensor, attention_mask: torch.Tensor = None) -> torch.Tensor:
         """
-        Forward pass of the masked predictor.
-
+        Predicts the original tokens for masked positions.
         Args:
-            x_t: Input tensor representing partially masked sequences at time step t.
-                 Shape: (batch_size, sequence_length)
-            attention_mask: Optional attention mask to prevent attending to padding tokens.
-                            Shape: (batch_size, sequence_length)
-
+            x_t: Input tensor with masked tokens (e.g., represented by a special token ID).
+            attention_mask: Attention mask for the input tensor.
         Returns:
-            Logits for predicting the original tokens at masked positions.
-            Shape: (batch_size, sequence_length, vocab_size)
+            Logits for the predicted tokens.
         """
-        # TODO: Implement the forward pass of the masked predictor.
-        # This involves:
-        # 1. Embedding the input tokens (x_t).
-        # 2. Adding positional encodings.
-        # 3. Passing through the Transformer encoder.
-        # 4. Projecting to vocabulary size to get logits.
-
-        # Placeholder implementation:
-        seq_len = x_t.size(1)
-        positions = torch.arange(seq_len, device=x_t.device).unsqueeze(0)
-        # Ensure positions are within the bounds of positional_encoding
-        positions = positions % self.positional_encoding.num_embeddings
-
-        token_emb = self.token_embedding(x_t)
-        pos_emb = self.positional_encoding(positions)
-        embedded = self.dropout(token_emb + pos_emb)
-
-        # The Transformer expects a specific attention_mask format.
-        # If a simple mask is provided (e.g., indicating padding), it needs to be converted.
-        # For masked language modeling, we typically don't mask tokens themselves,
-        # but rather use the attention mask to ignore padding.
-        # If attention_mask is None, create a mask that attends to all tokens.
-        if attention_mask is None:
-            attention_mask = torch.ones(x_t.size(0), seq_len, device=x_t.device)
-        # Transformer expects a mask where True means "ignore"
-        transformer_attention_mask = (attention_mask == 0) # Assuming 0 means padding
-
-        transformer_output = self.transformer_encoder(embedded, src_key_padding_mask=transformer_attention_mask)
-        logits = self.fc_out(transformer_output)
-
+        # TODO: Implement the forward pass of the masked predictor
+        # The input x_t will contain original tokens and mask tokens.
+        # The model should predict the original tokens for the masked positions.
+        embedded = self.embedding(x_t)
+        for layer in self.transformer_layers:
+            embedded = layer(embedded, src_key_padding_mask=~attention_mask) # Assuming attention_mask is True for valid tokens
+        logits = self.lm_head(embedded)
         return logits
 
-class LLaDA(nn.Module):
-    """
-    LLaDA: Large Language Diffusion Models.
-    This class implements the LLaDA model, which defines a model distribution p_theta(x_0)
-    through a forward and a reverse process.
-    """
-    def __init__(self, vocab_size: int, d_model: int, nhead: int, num_layers: int, dim_feedforward: int, dropout: float = 0.1):
-        """
-        Initializes the LLaDA model.
+# Constants and Configuration
+MASK_TOKEN_ID = 0  # Example mask token ID
+VOCAB_SIZE = 32000 # Example vocabulary size
+HIDDEN_SIZE = 768  # Example hidden size
+NUM_LAYERS = 12    # Example number of layers
+MAX_SEQ_LEN = 1024 # Example maximum sequence length
+PRETRAIN_EPOCHS = 10 # Example pre-training epochs
+SFT_EPOCHS = 5     # Example SFT epochs
+MC_ESTIMATIONS = 10 # Example number of Monte Carlo estimations
 
-        Args:
-            vocab_size: The size of the vocabulary.
-            d_model: The dimension of the model's embeddings.
-            nhead: The number of attention heads in the Transformer encoder.
-            num_layers: The number of Transformer encoder layers.
-            dim_feedforward: The dimension of the feedforward network model in Transformer encoder layers.
-            dropout: The dropout probability.
-        """
-        super().__init__()
+class LLaDA:
+    def __init__(self, vocab_size: int = VOCAB_SIZE, hidden_size: int = HIDDEN_SIZE, num_layers: int = NUM_LAYERS):
+        self.model = MaskedPredictor(vocab_size, hidden_size, num_layers)
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-4)
         self.vocab_size = vocab_size
-        self.d_model = d_model
-        self.masked_predictor = MaskedPredictor(vocab_size, d_model, nhead, num_layers, dim_feedforward, dropout)
+        self.mask_token_id = MASK_TOKEN_ID
 
-    def forward(self, x_t: torch.Tensor, t: float) -> torch.Tensor:
+    def _get_mask_attention_mask(self, sequence_length: int, mask_prob: float) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Forward pass of the LLaDA model, representing the reverse process.
-        Predicts the original tokens x_0 given the partially masked sequence x_t at time t.
-
+        Generates a masked sequence and its corresponding attention mask.
         Args:
-            x_t: Input tensor representing partially masked sequences at time step t.
-                 Shape: (batch_size, sequence_length)
-            t: The current time step (a float between 0 and 1).
-
+            sequence_length: The length of the sequence.
+            mask_prob: The probability of masking a token.
         Returns:
-            Logits for predicting the original tokens at masked positions.
-            Shape: (batch_size, sequence_length, vocab_size)
+            A tuple containing:
+                - masked_sequence: The sequence with tokens masked.
+                - attention_mask: The attention mask (True for non-masked tokens).
         """
-        # The paper states: "The model uses cross-entropy loss, computed only on the masked tokens."
-        # The masked_predictor is parameterized as p_theta(x_t | x_t).
-        # This function essentially calls the masked_predictor.
-        # The time step 't' might be used to condition the model in more advanced implementations,
-        # but based on the provided description, it's directly passed to the predictor.
-        # TODO: Consider if 't' needs to be explicitly encoded or used to condition the predictor.
-        # For now, we assume the predictor implicitly handles the time step information or it's not explicitly conditioned.
-        return self.masked_predictor(x_t)
+        # TODO: Implement the masking strategy as described in the paper.
+        # For t in (0, 1), sequence xt is partially masked, where each token is masked with probability t.
+        tokens = torch.arange(sequence_length)
+        mask = torch.rand(sequence_length) < mask_prob
+        masked_sequence = torch.where(mask, torch.tensor(self.mask_token_id), tokens)
+        attention_mask = ~mask
+        return masked_sequence, attention_mask
 
-    def loss_fn(self, x_0: torch.Tensor, x_t: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    def pre_train(self, data_loader: torch.utils.data.DataLoader, epochs: int = PRETRAIN_EPOCHS):
         """
-        Calculates the LLaDA loss function.
-        L(theta) = -E_{t, x_0, x_t} [ (1/t) * sum_{i=1}^{L} 1[x_t^i = M] * log p_theta(x_0^i | x_t^i) ]
-
-        Args:
-            x_0: The original clean sequences. Shape: (batch_size, sequence_length)
-            x_t: The partially masked sequences at time step t. Shape: (batch_size, sequence_length)
-            t: The time step for each sequence in the batch. Shape: (batch_size,)
-
-        Returns:
-            The calculated loss.
+        Algorithm 1: Pre-training of LLADA
+        Ref: Section 3.1, Algorithm 1
         """
-        # TODO: Implement the LLaDA loss function.
-        # This involves:
-        # 1. Identifying the masked tokens in x_t.
-        # 2. Getting predictions from the masked_predictor.
-        # 3. Computing the cross-entropy loss only on the masked tokens.
-        # 4. Applying the (1/t) weighting.
+        self.model.train()
+        for epoch in range(epochs):
+            total_loss = 0
+            for batch in data_loader:
+                # TODO: Implement the pre-training loop.
+                # 1. Sample x0 from p_data.
+                # 2. Sample t ~ U(0, 1].
+                # 3. Obtain xt ~ q_t|0(xt|x0).
+                # 4. Calculate the loss L = -1/t * sum(1[xt_i = M] * log p_theta(x0_i | xt)).
+                # 5. Calculate gradients and update optimizer.
 
-        logits = self.masked_predictor(x_t) # Shape: (batch_size, sequence_length, vocab_size)
+                # Placeholder for batch processing
+                x0 = batch # Assuming batch is x0
+                sequence_length = x0.size(1)
+                t_prob = torch.rand(1).item() # Sample t ~ U(0, 1]
+                if t_prob == 0: t_prob = 1e-6 # Avoid division by zero
 
-        # Create a mask for the masked tokens.
-        # Assuming MASK_TOKEN is used to represent masked positions in x_t.
-        masked_token_mask = (x_t == MASK_TOKEN) # Shape: (batch_size, sequence_length)
+                # Simulate xt from x0 based on t_prob (forward process)
+                # In a real implementation, this would involve a diffusion process q_t|0
+                masked_x0, attention_mask_x0 = self._get_mask_attention_mask(sequence_length, t_prob)
+                xt = masked_x0 # Simplified: assume masking directly gives xt for this example
 
-        # Calculate cross-entropy loss.
-        # We need to gather the predicted logits for the actual tokens in x_0 at the masked positions.
-        # F.cross_entropy expects (N, C) and (N) or (N, C, d1, d2, ...) and (N, d1, d2, ...)
-        # Here, N = batch_size * sequence_length, C = vocab_size.
-        # We need to flatten the tensors and apply the mask.
+                # Predict original tokens for masked positions
+                logits = self.model(xt, attention_mask=attention_mask_x0)
 
-        # Reshape for cross_entropy: (batch_size * sequence_length, vocab_size)
-        logits_flat = logits.view(-1, self.vocab_size)
-        # Reshape target: (batch_size * sequence_length)
-        x_0_flat = x_0.view(-1)
-        # Reshape mask: (batch_size * sequence_length)
-        masked_token_mask_flat = masked_token_mask.view(-1)
+                # Calculate loss only on masked tokens
+                loss_mask = (xt == self.mask_token_id)
+                # Ensure loss_mask is broadcastable with logits
+                loss_mask = loss_mask.unsqueeze(-1).expand_as(logits)
 
-        # Calculate loss only for masked tokens.
-        # We can use F.cross_entropy with ignore_index or manually mask.
-        # Let's manually mask for clarity with the (1/t) weighting.
+                # Cross-entropy loss, only considering masked positions
+                # We need to compare predicted logits with the original tokens x0
+                # The target for the masked positions should be x0
+                target_logits = F.one_hot(x0, num_classes=self.vocab_size).float()
 
-        # Get the indices of the masked tokens
-        masked_indices = torch.where(masked_token_mask_flat)[0]
+                # Calculate loss using only masked positions
+                # We need to select the relevant logits and targets
+                masked_logits = logits[loss_mask].view(-1, self.vocab_size)
+                masked_targets = x0[loss_mask.any(dim=-1)] # Get the original tokens at masked positions
 
-        if masked_indices.numel() == 0:
-            return torch.tensor(0.0, device=x_t.device, requires_grad=True) # No masked tokens to compute loss on
+                if masked_targets.numel() > 0:
+                    loss = F.cross_entropy(masked_logits, masked_targets) / t_prob
+                    self.optimizer.zero_grad()
+                    loss.backward()
+                    self.optimizer.step()
+                    total_loss += loss.item()
+                else:
+                    # Handle cases where no tokens were masked (e.g., t_prob is very low)
+                    pass
 
-        # Gather the relevant logits and targets
-        masked_logits = logits_flat[masked_indices]
-        masked_x_0 = x_0_flat[masked_indices]
+            print(f"Pre-train Epoch {epoch+1}/{epochs}, Loss: {total_loss / len(data_loader)}")
 
-        # Compute cross-entropy loss for masked tokens
-        ce_loss = F.cross_entropy(masked_logits, masked_x_0, reduction='none') # Shape: (num_masked_tokens,)
-
-        # Apply the (1/t) weighting.
-        # The time step 't' is a tensor of shape (batch_size,). We need to broadcast it correctly.
-        # The loss is computed per token, so we need to associate each masked token with its batch's 't'.
-        # This requires careful indexing or repeating 't'.
-
-        # Let's re-think the loss calculation to align with the formula:
-        # L = -E_{t, x_0, x_t} [ (1/t) * sum_{i=1}^{L} 1[x_t^i = M] * log p_theta(x_0^i | x_t^i) ]
-        # This implies we should compute the sum for each sequence, then average over batches and time steps.
-
-        # Alternative approach: Compute loss per sequence element, then mask and weight.
-        # Log probability of the correct token at masked positions
-        log_probs = F.log_softmax(logits, dim=-1)
-        # Gather the log probabilities for the actual tokens in x_0 at the masked positions
-        gathered_log_probs = torch.gather(log_probs, -1, x_0.unsqueeze(-1)).squeeze(-1) # Shape: (batch_size, sequence_length)
-
-        # Mask the log probabilities where tokens were not masked
-        masked_log_probs = gathered_log_probs.masked_fill(~masked_token_mask, 0.0) # Set non-masked to 0
-
-        # Apply the (1/t) weighting. t is (batch_size,)
-        # We need to repeat t for each token in the sequence.
-        t_weighted = t.unsqueeze(-1).repeat(1, x_0.size(1)) # Shape: (batch_size, sequence_length)
-        # Avoid division by zero if t can be 0. The paper states t ~ U(0, 1].
-        weighted_masked_log_probs = masked_log_probs / t_weighted
-
-        # Sum over the sequence length
-        sum_weighted_masked_log_probs = torch.sum(weighted_masked_log_probs, dim=-1) # Shape: (batch_size,)
-
-        # The formula has a negative sign and an expectation.
-        # We are calculating -sum(...) for each batch element, and then we'll average.
-        loss = -sum_weighted_masked_log_probs
-
-        # Average over the batch
-        mean_loss = torch.mean(loss)
-
-        return mean_loss
-
-    def forward_process(self, x_0: torch.Tensor, t: float) -> torch.Tensor:
+    def fine_tune(self, data_loader: torch.utils.data.DataLoader, epochs: int = SFT_EPOCHS):
         """
-        Simulates the forward diffusion process.
-        Gradually masks tokens in x_0 until time step t.
-        For t in (0, 1), each token is masked with probability t.
-
-        Args:
-            x_0: The original clean sequences. Shape: (batch_size, sequence_length)
-            t: The target time step (a float between 0 and 1).
-
-        Returns:
-            The partially masked sequences x_t. Shape: (batch_size, sequence_length)
+        Algorithm 2: Supervised Fine-Tuning of LLADA
+        Ref: Section 3.2, Algorithm 2
         """
-        # TODO: Implement the forward process.
-        # This involves creating x_t by masking tokens in x_0 with probability t.
-        # Note: The paper's description of the forward process is a bit unusual:
-        # "For t in (0, 1), the sequence x_t is partially masked, where each token is masked with probability t,
-        # or remains unmasked with probability 1-t."
-        # This is different from standard diffusion where noise is gradually added.
-        # Here, it seems like a direct masking process.
+        self.model.train()
+        for epoch in range(epochs):
+            total_loss = 0
+            for batch in data_loader:
+                # TODO: Implement the SFT loop.
+                # 1. Sample (p0, r0) from p_data.
+                # 2. Sample t ~ U(0, 1].
+                # 3. Obtain rt ~ q_t|0(rt|r0).
+                # 4. Calculate the loss L = -1/t * sum(1[rt_i = M] * log p_theta(r0_i | p0, rt)).
+                # 5. Calculate gradients and update optimizer.
 
-        if t <= 0:
-            return x_0 # At t=0, no masking
+                # Placeholder for batch processing
+                p0, r0 = batch # Assuming batch is a tuple (prompt, response)
+                sequence_length = r0.size(1)
+                t_prob = torch.rand(1).item() # Sample t ~ U(0, 1]
+                if t_prob == 0: t_prob = 1e-6
 
-        batch_size, seq_len = x_0.shape
-        # Create a mask tensor
-        mask = torch.rand(batch_size, seq_len, device=x_t.device) < t
-        # Apply the mask: replace tokens with MASK_TOKEN where mask is True
-        x_t = torch.where(mask, torch.tensor(MASK_TOKEN, device=x_0.device, dtype=x_0.dtype), x_0)
-        return x_t
+                # Simulate rt from r0 based on t_prob (forward process)
+                masked_r0, attention_mask_r0 = self._get_mask_attention_mask(sequence_length, t_prob)
+                rt = masked_r0 # Simplified
 
-    def reverse_process_sample(self, x_t: torch.Tensor, t: float, s: float) -> torch.Tensor:
+                # Predict original tokens for masked positions, conditioned on prompt p0
+                # The model needs to handle conditioning on p0. This might involve concatenating p0 and rt,
+                # or using cross-attention mechanisms if the model architecture supports it.
+                # For simplicity here, we'll assume the model can take both.
+                # A common approach is to prepend the prompt to the masked sequence.
+                # Ensure p0 and rt are on the same device and have compatible dimensions for concatenation.
+                # For now, let's assume the model's forward pass can handle this implicitly or explicitly.
+                # If not, you'd need to modify the MaskedPredictor to accept p0.
+                # For this placeholder, we'll pass rt and assume p0 is handled internally or not needed for this simplified step.
+                # In a real scenario, you'd likely need to adapt the MaskedPredictor or its input.
+                # Example: combined_input = torch.cat((p0, rt), dim=-1) if p0 is also token IDs.
+                # For now, we'll just pass rt and assume the model is aware of p0 context.
+                # A more accurate representation might be:
+                # combined_input = torch.cat((p0, rt), dim=-1)
+                # logits = self.model(combined_input, attention_mask=...)
+                # But since the prompt doesn't specify how p0 is used, we'll stick to rt for now.
+                # TODO: Properly integrate prompt p0 into the model's input for prediction.
+                logits = self.model(rt, attention_mask=attention_mask_r0) # This is a simplification
+
+                # Calculate loss only on masked tokens in rt
+                loss_mask = (rt == self.mask_token_id)
+                loss_mask = loss_mask.unsqueeze(-1).expand_as(logits)
+
+                # Target for masked positions is r0
+                target_logits = F.one_hot(r0, num_classes=self.vocab_size).float()
+
+                masked_logits = logits[loss_mask].view(-1, self.vocab_size)
+                masked_targets = r0[loss_mask.any(dim=-1)]
+
+                if masked_targets.numel() > 0:
+                    loss = F.cross_entropy(masked_logits, masked_targets) / t_prob
+                    self.optimizer.zero_grad()
+                    loss.backward()
+                    self.optimizer.step()
+                    total_loss += loss.item()
+
+            print(f"SFT Epoch {epoch+1}/{epochs}, Loss: {total_loss / len(data_loader)}")
+
+    def evaluate_conditional_likelihood(self, prompt: torch.Tensor, response: torch.Tensor, n_mc_estimations: int = MC_ESTIMATIONS) -> float:
         """
-        Performs one step of the reverse diffusion process from time t to time s.
-        Predicts masked tokens and re-masks a fraction of them.
-
-        Args:
-            x_t: Partially masked sequences at time step t. Shape: (batch_size, sequence_length)
-            t: The current time step.
-            s: The next time step (s < t).
-
-        Returns:
-            Partially masked sequences at time step s. Shape: (batch_size, sequence_length)
+        Algorithm 3: Conditional Log-likelihood Evaluation of LLADA
+        Ref: Section 3.3, Algorithm 3 and Eq. (6)
         """
-        # TODO: Implement the reverse process step.
-        # This involves:
-        # 1. Feeding x_t into the masked_predictor to get predictions for masked tokens.
-        # 2. Re-masking a fraction (s/t) of the predicted tokens.
-        #    The paper mentions "low-confidence remasking strategy" for this.
+        self.model.eval()
+        log_likelihood = 0.0
+        response_length = response.size(0)
 
-        # Predict all masked tokens using the model
-        logits = self.masked_predictor(x_t) # Shape: (batch_size, sequence_length, vocab_size)
+        for _ in range(n_mc_estimations):
+            # TODO: Implement conditional log-likelihood evaluation.
+            # 1. Sample l ~ U{1, 2, ..., L} (where L is response length).
+            # 2. Obtain rt by uniformly sampling l tokens from r0 without replacement for masking.
+            # 3. Calculate log_likelihood += (1/L) * sum(1[rt_i = M] * log p_theta(r0_i | p0, rt)).
+            # 4. Average over n_mc_estimations.
 
-        # Get the predicted token IDs (greedy sampling)
-        predicted_tokens = torch.argmax(logits, dim=-1) # Shape: (batch_size, sequence_length)
+            # Sample l from U{1, ..., L}
+            l = torch.randint(1, response_length + 1, (1,)).item()
 
-        # Create a mask for tokens that were originally masked in x_t
-        original_masked_mask = (x_t == MASK_TOKEN) # Shape: (batch_size, sequence_length)
+            # Obtain rt by uniformly sampling l tokens from response for masking
+            # Create a mask for sampling
+            indices_to_mask = torch.randperm(response_length)[:l]
+            rt = response.clone()
+            rt[indices_to_mask] = self.mask_token_id
+            attention_mask_rt = (rt != self.mask_token_id)
 
-        # Initialize x_s with x_t
-        x_s = x_t.clone()
+            # Predict original tokens for masked positions, conditioned on prompt p0
+            # Similar to SFT, prompt p0 needs to be integrated.
+            # For now, we use rt and assume p0 context is handled.
+            # TODO: Properly integrate prompt p0 into the model's input for prediction.
+            with torch.no_grad():
+                logits = self.model(rt, attention_mask=attention_mask_rt)
 
-        # Update tokens that were masked in x_t with their predictions
-        x_s = torch.where(original_masked_mask, predicted_tokens, x_s)
+            # Calculate the sum of log probabilities for masked tokens
+            current_log_likelihood_sum = 0.0
+            num_masked_tokens = 0
+            for i in range(response_length):
+                if rt[i] == self.mask_token_id:
+                    # Get the predicted probability for the original token r0[i]
+                    predicted_token_prob = torch.softmax(logits[i], dim=-1)[response[i]].item()
+                    if predicted_token_prob > 1e-9: # Avoid log(0)
+                        current_log_likelihood_sum += np.log(predicted_token_prob)
+                    else:
+                        current_log_likelihood_sum += np.log(1e-9) # Use a small epsilon
+                    num_masked_tokens += 1
 
-        # Apply remasking strategy: remask s/t of the predicted tokens.
-        # The paper refers to "low-confidence remasking strategy" [23].
-        # This means we need to identify the predicted tokens with the lowest confidence.
-        # Confidence can be derived from the softmax probabilities of the predicted tokens.
+            if num_masked_tokens > 0:
+                # Eq. (6) uses L/l * sum(...)
+                # The paper's Eq. (6) is: -E[L/l * sum(I[rt_i=M] * log p0(rt_i | p0, rt))]
+                # Our implementation calculates E[sum(I[rt_i=M] * log p0(rt_i | p0, rt))]
+                # We need to adjust for the L/l factor and the negative sign.
+                # The formula in Algorithm 3 is: (1/L) * sum(1[rt_i = M] * log p_theta(r0_i | p0, rt))
+                # This seems to be a simplified version or a different formulation.
+                # Let's follow Algorithm 3's calculation for now.
+                log_likelihood_term = current_log_likelihood_sum / response_length
+                log_likelihood += log_likelihood_term
+            else:
+                # If no tokens were masked (e.g., l=0, though l starts from 1), this term is 0.
+                pass
 
-        if s < t: # Only remask if moving to an earlier timestep
-            # Calculate the number of tokens to remask.
-            # The paper states: "s/t of predicted tokens with the lowest confidence are remarked"
-            # Let's assume we need to remask approximately (s/t) * num_predicted_tokens.
-            # A simpler interpretation might be to remask (s/t) fraction of *all* tokens that were predicted.
+        return log_likelihood / n_mc_estimations
 
-            # Get probabilities for the predicted tokens
-            probs = F.softmax(logits, dim=-1)
-            predicted_token_probs, _ = torch.max(probs, dim=-1) # Confidence of the predicted token
+    def sample_random_remasking(self, prompt: torch.Tensor, length: int, num_steps: int) -> torch.Tensor:
+        """
+        Algorithm 4: Random Remasking Strategy of LLaDA
+        Ref: Section 3.4, Algorithm 4
+        """
+        # TODO: Implement the random remasking strategy.
+        # 1. Initialize r_1 as a fully masked sequence.
+        # 2. Iterate from t=1 down to 1/N step 1/N.
+        # 3. Calculate s = t - 1/N.
+        # 4. Predict r_0 using greedy sampling (argmax).
+        # 5. For each token, if not already predicted, remask with probability s/t.
+        # 6. Set r_s = r_0.
+        # 7. Return r_0.
 
-            # Mask the confidence scores where tokens were not originally masked
-            masked_confidence = predicted_token_probs.masked_fill(~original_masked_mask, float('inf')) # Set non-masked to inf so they are not selected
+        # Initialize r_1 as a fully masked sequence
+        r_t = torch.full((length,), self.mask_token_id, dtype=torch.long)
+        step_size = 1.0 / num_steps
 
-            # Determine the number of tokens to remask
-            num_predicted_tokens = torch.sum(original_masked_mask, dim=-1) # Number of tokens predicted per batch item
-            num_to_remask = torch.floor(num_predicted_tokens * (s / t)).long() # Number to remask per batch item
+        for t_val in np.arange(1.0, 0, -step_size):
+            t = t_val
+            s = max(0.0, t - step_size) # Ensure s is not negative
 
-            # Find the indices of tokens with the lowest confidence among the predicted ones
-            # This is a bit tricky to do efficiently per batch item.
-            # We can flatten, sort, and then select.
+            # Predict r_0 using greedy sampling (argmax)
+            # This requires feeding r_t into the model and taking the argmax of the output logits.
+            # The model needs to be able to predict all masked tokens simultaneously.
+            # TODO: Properly integrate prompt p0 into the model's input for prediction.
+            with torch.no_grad():
+                logits = self.model(r_t, attention_mask=(r_t != self.mask_token_id)) # Assuming attention mask for current r_t
 
-            # For simplicity, let's implement a random remasking first, then low-confidence.
-            # Random remasking: remask s/t fraction of predicted tokens randomly.
-            # TODO: Implement the actual low-confidence remasking strategy as described in Algorithm 5.
-            # For now, a simplified random remasking:
-            # Create a mask for remasking.
-            # We need to select num_to_remask tokens from the originally masked tokens.
+            # Greedy sampling: predict the most likely token for each position
+            r_0_predicted = torch.argmax(logits, dim=-1)
 
-            # Simplified random remasking:
-            # Create a mask for all tokens that were predicted.
-            potential_remask_mask = original_masked_mask.clone().float()
-            # Randomly set some of these to 0 (not to be remasked) to achieve the s/t ratio.
-            # This is a rough approximation. A more precise method would involve sampling.
+            # Create r_0 by combining existing tokens and predicted tokens
+            r_0 = r_t.clone()
+            for i in range(length):
+                if r_t[i] == self.mask_token_id:
+                    r_0[i] = r_0_predicted[i]
 
-            # Let's use Algorithm 4's logic for random remasking as a placeholder.
-            # Algorithm 4: "with probability s/t, r_0^i is set to M"
-            # This implies that for each predicted token, we decide whether to remask it.
+            # Remask with probability s/t
             remask_prob = s / t
-            remask_decision = torch.rand(x_s.shape, device=x_s.device) < remask_prob
+            if remask_prob > 0:
+                remask_mask = torch.rand(length) < remask_prob
+                # Only remask positions that were originally masked in r_t
+                original_mask_indices = (r_t == self.mask_token_id)
+                indices_to_remask = remask_mask & original_mask_indices
+                r_0[indices_to_remask] = self.mask_token_id
 
-            # Apply remasking only to tokens that were predicted and where the decision is True.
-            final_remask_mask = original_masked_mask & remask_decision
-            x_s = torch.where(final_remask_mask, torch.tensor(MASK_TOKEN, device=x_s.device, dtype=x_s.dtype), x_s)
+            r_t = r_0 # Update r_t for the next iteration
 
-        return x_s
+        return r_t
 
-    def sample(self, prompt_tokens: torch.Tensor, num_steps: int = 1000) -> torch.Tensor:
+    def sample_low_confidence_remasking(self, prompt: torch.Tensor, length: int, num_steps: int) -> torch.Tensor:
         """
-        Generates a sequence using the reverse diffusion process.
+        Algorithm 5: Low-confidence Remasking Strategy of LLaDA
+        Ref: Section 3.5, Algorithm 5
+        """
+        # TODO: Implement the low-confidence remasking strategy.
+        # 1. Initialize r_1 as a fully masked sequence.
+        # 2. Iterate from t=1 down to 1/N step 1/N.
+        # 3. Calculate s = t - 1/N.
+        # 4. Predict r_0 and confidence scores c.
+        # 5. Determine the number of unmasked tokens n_un at timestep s.
+        # 6. Remask the n_un positions with the lowest confidence.
+        # 7. Set r_s = r_0.
+        # 8. Return r_0.
 
+        # Initialize r_1 as a fully masked sequence
+        r_t = torch.full((length,), self.mask_token_id, dtype=torch.long)
+        step_size = 1.0 / num_steps
+
+        for t_val in np.arange(1.0, 0, -step_size):
+            t = t_val
+            s = max(0.0, t - step_size)
+
+            # Predict r_0 and confidence scores c
+            # TODO: Properly integrate prompt p0 into the model's input for prediction.
+            with torch.no_grad():
+                logits = self.model(r_t, attention_mask=(r_t != self.mask_token_id))
+
+            r_0_predicted = torch.argmax(logits, dim=-1)
+            confidence_scores = F.softmax(logits, dim=-1).gather(1, r_0_predicted.unsqueeze(1)).squeeze(1)
+
+            r_0 = r_t.clone()
+            c = torch.ones(length) # Initialize confidence for non-masked tokens to 1
+
+            for i in range(length):
+                if r_t[i] == self.mask_token_id:
+                    r_0[i] = r_0_predicted[i]
+                    c[i] = confidence_scores[i]
+                else:
+                    # If token is not masked, its confidence is effectively 1 (or not considered for remasking)
+                    # We set it high so it's not among the lowest.
+                    c[i] = 1.0
+
+            # Determine the number of unmasked tokens n_un at timestep s
+            # This is based on the forward process definition: each token is masked with probability t.
+            # So, at step s, the expected number of unmasked tokens is L * (1-s).
+            # The paper states: n_un = floor(L * (1-s))
+            n_un = int(length * (1 - s)) # Number of tokens that should be unmasked at step s
+
+            # Find the indices with the lowest confidence scores among the predicted tokens
+            # We only consider positions that were masked in r_t for remasking.
+            masked_indices_mask = (r_t == self.mask_token_id)
+            masked_confidences = c[masked_indices_mask]
+
+            if masked_confidences.numel() > 0:
+                # Get the indices of the lowest confidence scores within the masked positions
+                # We need to remask `length - n_un` tokens in total.
+                # The number of tokens to potentially remask is the number of currently unmasked tokens in r_0.
+                num_currently_unmasked = (r_0 != self.mask_token_id).sum().item()
+                num_to_remask = max(0, num_currently_unmasked - n_un) # Number of tokens to force back to mask
+
+                if num_to_remask > 0:
+                    # Get the indices within the original `length` tensor that correspond to the masked positions
+                    original_masked_indices = torch.where(masked_indices_mask)[0]
+
+                    # Find the indices of the lowest confidence scores among these masked positions
+                    # We need to select `num_to_remask` indices from `original_masked_indices` based on `masked_confidences`.
+                    sorted_indices_in_masked = torch.argsort(masked_confidences)
+                    indices_to_remask_in_masked = sorted_indices_in_masked[:num_to_remask]
+
+                    # Map these back to the original tensor indices
+                    indices_to_remask_global = original_masked_indices[indices_to_remask_in_masked]
+
+                    # Set these positions back to mask
+                    r_0[indices_to_remask_global] = self.mask_token_id
+
+            r_t = r_0 # Update r_t for the next iteration
+
+        return r_0
+
+    def generate_text(self, prompt: str, max_length: int = 100, sampling_strategy: str = "low_confidence") -> str:
+        """
+        Generates text using the LLaDA model.
         Args:
-            prompt_tokens: The initial prompt tokens (can be partially masked or a starting sequence).
-                           Shape: (batch_size, sequence_length)
-            num_steps: The number of reverse steps to take.
-
+            prompt: The input prompt.
+            max_length: The maximum length of the generated text.
+            sampling_strategy: The sampling strategy to use ('random_remasking' or 'low_confidence').
         Returns:
-            The generated sequence. Shape: (batch_size, sequence_length)
+            The generated text.
         """
-        # TODO: Implement the sampling procedure.
-        # This involves starting from a fully masked sequence (or a sequence derived from the prompt)
-        # and iteratively applying the reverse_process_sample function.
-        # The paper mentions "iteratively predicting masked tokens to recover the data distribution,
-        # moving from t=1 to t=0."
+        # TODO: Implement text generation.
+        # This involves using the sampling algorithms (Algorithm 4 or 5) to generate a sequence.
+        # The prompt needs to be tokenized and potentially used to initialize the generation.
 
-        batch_size, seq_len = prompt_tokens.shape
-        # Initialize x_1 as a fully masked sequence.
-        # The prompt might be used to condition the generation, or it could be the starting point.
-        # Based on the description, it seems we start from a fully masked sequence and generate.
-        # If prompt_tokens is meant to be a prefix, it needs to be handled.
-        # For now, let's assume we start with a fully masked sequence of the same length as the prompt.
-        x_t = torch.full((batch_size, seq_len), MASK_TOKEN, dtype=prompt_tokens.dtype, device=prompt_tokens.device)
+        # Tokenize the prompt
+        # Assuming a tokenizer is available, e.g., from Hugging Face Transformers
+        # from transformers import AutoTokenizer
+        # tokenizer = AutoTokenizer.from_pretrained("...")
+        # prompt_tokens = tokenizer.encode(prompt, return_tensors="pt")
+        # For this example, we'll use dummy tokenization.
+        prompt_tokens = torch.tensor([hash(c) % self.vocab_size for c in prompt], dtype=torch.long) # Dummy tokenization
 
-        # Define the time steps for the reverse process.
-        # We need to go from t=1 down to t=0.
-        # The paper uses continuous time t in [0, 1]. For discrete steps, we can discretize this.
-        # Let's assume num_steps corresponds to the number of intervals.
-        # Time steps will be 1.0, 1.0 - 1/num_steps, ..., 1/num_steps.
-        time_steps = torch.linspace(1.0, 0.0, num_steps + 1, device=prompt_tokens.device)
+        # Initialize the sequence for sampling
+        # The sampling algorithms start with a masked sequence.
+        # The prompt might be used to condition the generation, e.g., by prepending it
+        # or by using it in the model's conditioning mechanism.
+        # For algorithms 4 and 5, they seem to start with a fully masked sequence of a given length.
+        # The prompt's role in conditioning these sampling algorithms needs clarification from the paper.
+        # Assuming the prompt is used to initialize the model's state or as a prefix.
 
-        for i in range(num_steps):
-            t = time_steps[i]
-            s = time_steps[i+1]
+        # Let's assume the sampling algorithms can be conditioned on the prompt.
+        # For now, we'll pass the prompt tokens and let the sampling functions handle it.
+        # The length parameter for sampling functions should be max_length.
+        # The num_steps parameter for sampling functions needs to be defined. Let's use a default.
+        sampling_steps = 50 # Example number of sampling steps
 
-            # If the prompt is meant to condition the generation, it should be fed into the model.
-            # The current `masked_predictor` doesn't explicitly take a prompt.
-            # TODO: Adapt the sampling to incorporate conditioning if needed.
-            # For now, we generate unconditionally from a masked state.
+        if sampling_strategy == "random_remasking":
+            generated_tokens = self.sample_random_remasking(prompt_tokens, max_length, sampling_steps)
+        elif sampling_strategy == "low_confidence":
+            generated_tokens = self.sample_low_confidence_remasking(prompt_tokens, max_length, sampling_steps)
+        else:
+            raise ValueError(f"Unknown sampling strategy: {sampling_strategy}")
 
-            x_t = self.reverse_process_sample(x_t, t, s)
+        # Decode the generated tokens back to text
+        # Assuming a tokenizer is available
+        # generated_text = tokenizer.decode(generated_tokens)
+        # Dummy decoding:
+        generated_text = "".join([chr(ord('a') + (token.item() % 26)) for token in generated_tokens]) # Very basic dummy decoding
 
-        # The final output x_0 is obtained after the last step.
-        # Ensure no MASK_TOKEN remains if the process is complete.
-        # If MASK_TOKEN remains, it implies the model failed to predict it.
-        # We might need a final prediction pass or handle these cases.
-        # For now, assume x_t at the end is the generated sequence.
-        return x_t
+        # A more realistic approach would involve prepending the prompt to the generated sequence
+        # and then decoding. Or, the sampling process itself might incorporate the prompt.
+        # For now, we return the generated part.
+        return generated_text
 
-    def evaluate_conditional_likelihood(self, p_0: torch.Tensor, r_0: torch.Tensor, n_mc: int = 10) -> torch.Tensor:
+    def evaluate_gsm8k(self, dataset: List[Dict[str, Any]]):
         """
-        Evaluates the conditional log-likelihood using the equivalent form.
-        -E_{L, r_0, r_t} [ (L/l) * sum_{i=1}^{l} I[r_t^i = M] * log p_0(r_t^i | p_0, r_t) ]
-
-        Args:
-            p_0: The prompt sequence. Shape: (batch_size, sequence_length)
-            r_0: The response sequence. Shape: (batch_size, sequence_length)
-            n_mc: The number of Monte Carlo estimations.
-
-        Returns:
-            The average conditional log-likelihood.
+        Evaluates LLaDA on the iGSM dataset for math problem-solving.
+        Ref: Appendix B.7, EvaluateLLaDAonIGSM
         """
-        # TODO: Implement conditional log-likelihood evaluation.
-        # This involves:
-        # 1. Sampling a time step 'l' (sequence length for masking).
-        # 2. Creating r_t by masking 'l' tokens from r_0.
-        # 3. Using the masked predictor to estimate log p_0(r_t^i | p_0, r_t).
-        # 4. Computing the weighted sum and averaging over MC samples.
+        # TODO: Implement the evaluation on iGSM dataset.
+        # This involves generating synthetic problems, controlling difficulty,
+        # and evaluating the model's ability to solve them, ensuring the format "#### answer".
 
-        batch_size, seq_len = r_0.shape
-        total_log_likelihood = 0.0
+        print("Evaluating LLaDA on iGSM dataset...")
 
-        for _ in range(n_mc):
-            # Sample l uniformly from {1, 2, ..., L}
-            l = torch.randint(1, seq_len + 1, (1,)).item()
+        # Placeholder for problem generation and evaluation logic
+        generated_problems = self.generate_gsm8k_problems(dataset)
 
-            # Obtain r_t by uniformly sampling l tokens from r_0 without replacement for masking.
-            # Create a mask for the l tokens to be masked.
-            mask_indices = torch.randperm(seq_len)[:l]
-            r_t = r_0.clone()
-            r_t[:, mask_indices] = MASK_TOKEN
+        results = []
+        for problem in generated_problems:
+            prompt = problem['question']
+            # Tokenize prompt
+            prompt_tokens = torch.tensor([hash(c) % self.vocab_size for c in prompt], dtype=torch.long) # Dummy tokenization
 
-            # Predict the masked tokens using the model.
-            # The model needs to be conditioned on the prompt p_0.
-            # Assuming masked_predictor can handle conditioning implicitly or needs modification.
-            # For now, let's assume the `forward` method of LLaDA can take p_0.
-            # If not, the `masked_predictor` needs to be adapted.
-            # The formula uses p_0(r_t^i | p_0, r_t), suggesting the model predicts based on prompt and current state.
-            # Let's assume `self.masked_predictor` can take `p_0` as an argument or it's part of `r_t`'s context.
-            # For now, we'll pass `r_t` and assume `p_0` is handled if needed by the predictor.
-            # A common way is to concatenate p_0 and r_t, or use cross-attention.
-            # Given the current `MaskedPredictor` signature, it only takes `x_t`.
-            # TODO: Modify `MaskedPredictor` or `LLaDA.forward` to handle prompt conditioning.
-            # For now, we'll use the existing predictor on `r_t`.
+            # Generate solution using a sampling strategy (e.g., low_confidence)
+            # The length needs to be estimated or set to a reasonable maximum.
+            solution_tokens = self.sample_low_confidence_remasking(prompt_tokens, max_length=256, num_steps=50) # Example parameters
+            solution_text = "".join([chr(ord('a') + (token.item() % 26)) for token in solution_tokens]) # Dummy decoding
 
-            # Get logits for predicting original tokens at masked positions.
-            # We need to ensure the predictor is aware of the prompt `p_0`.
-            # Let's assume a hypothetical `predict_masked` method that takes prompt.
-            # If not, we'd need to modify `MaskedPredictor` to accept `p_0`.
-            # For this implementation, we'll call the existing predictor on `r_t`.
-            # This might not be fully accurate if prompt conditioning is crucial here.
-            logits = self.masked_predictor(r_t) # Shape: (batch_size, sequence_length, vocab_size)
+            # Extract the answer and format the solution
+            answer = self.extract_answer_from_solution(solution_text) # Placeholder
+            formatted_solution = solution_text + f" #### {answer}"
 
-            # Calculate log probabilities for the original tokens in r_0 at the masked positions.
-            log_probs = F.log_softmax(logits, dim=-1)
-            gathered_log_probs = torch.gather(log_probs, -1, r_0.unsqueeze(-1)).squeeze(-1) # Shape: (batch_size, sequence_length)
+            results.append({
+                "question": prompt,
+                "solution": solution_text,
+                "formatted_solution": formatted_solution,
+                "answer": answer
+            })
 
-            # Create a mask for the originally masked tokens in r_t.
-            masked_token_mask = (r_t == MASK_TOKEN) # Shape: (batch_size, sequence_length)
+        print(f"Evaluation complete. Processed {len(results)} problems.")
+        # In a real scenario, you would calculate accuracy based on the extracted answers.
+        return results
 
-            # Mask the log probabilities where tokens were not masked.
-            masked_log_probs = gathered_log_probs.masked_fill(~masked_token_mask, 0.0)
+    def generate_gsm8k_problems(self, dataset: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Placeholder function to generate synthetic GSM8K-like problems.
+        Ref: Appendix B.7
+        """
+        print("Generating synthetic GSM8K problems...")
+        # TODO: Implement problem generation logic based on dataset and difficulty control.
+        # This function should create problems with varying numbers of solution steps.
+        generated_problems = []
+        for i, item in enumerate(dataset[:5]): # Use a subset for demonstration
+            num_steps = np.random.randint(2, 6) # Simulate difficulty by number of steps
+            problem_data = {
+                "question": f"Problem {i+1}: Solve this math problem in {num_steps} steps.",
+                "difficulty": num_steps,
+                "original_data": item # Keep original data if needed
+            }
+            generated_problems.append(problem_data)
+        return generated_problems
 
-            # Calculate the sum: (L/l) * sum_{i=1}^{l} I[r_t^i = M] * log p_0(...)
-            # Here, L is seq_len, l is the sampled number of masked tokens.
-            # The sum is over the sequence length.
-            sum_term = torch.sum(masked_log_probs, dim=-1) # Sum over sequence length
-            weighted_sum = (seq_len / l) * sum_term # Shape: (batch_size,)
+    def extract_answer_from_solution(self, solution: str) -> str:
+        """
+        Placeholder function to extract the final answer from a generated solution.
+        Ref: Appendix B.7
+        """
+        # TODO: Implement answer extraction logic.
+        # This typically involves finding the "#### answer" pattern or similar.
+        # For dummy data, we'll return a placeholder.
+        return "dummy_answer"
 
-            # The formula is negative expectation. We are calculating the term inside the expectation.
-            # We will average these terms over MC samples and then take the negative.
-            total_log_likelihood += weighted_sum.mean().item() # Average over batch and add to total
+# Example Usage (requires dummy data loaders and datasets)
 
-        # Average over Monte Carlo estimations and take the negative.
-        avg_log_likelihood = - (total_log_likelihood / n_mc)
-        return avg_log_likelihood
-
-# --- Helper functions for training and data preparation ---
-
-def create_masked_data(x_0: torch.Tensor, t_values: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Creates masked data for training.
-    Args:
-        x_0: Original clean sequences. Shape: (batch_size, sequence_length)
-        t_values: Time steps for each sequence. Shape: (batch_size,)
-    Returns:
-        x_t: Partially masked sequences. Shape: (batch_size, sequence_length)
-        t_values: Time steps. Shape: (batch_size,)
-        mask: Mask indicating which tokens were masked. Shape: (batch_size, sequence_length)
-    """
-    # TODO: Implement the masking strategy for creating x_t based on t_values.
-    # This should align with the forward_process logic.
-    batch_size, seq_len = x_0.shape
-    mask = torch.rand(batch_size, seq_len, device=x_0.device) < t_values.unsqueeze(-1)
-    x_t = torch.where(mask, torch.tensor(MASK_TOKEN, device=x_0.device, dtype=x_0.dtype), x_0)
-    return x_t, t_values, mask
-
-def train_step(model: LLaDA, optimizer: torch.optim.Optimizer, batch: Dict[str, torch.Tensor], device: torch.device) -> float:
-    """
-    Performs a single training step.
-
-    Args:
-        model: The LLaDA model.
-        optimizer: The optimizer.
-        batch: A dictionary containing the training data ('x_0', 't').
-        device: The device to perform computations on.
-
-    Returns:
-        The loss for this training step.
-    """
-    model.train()
-    x_0 = batch['x_0'].to(device)
-    t = batch['t'].to(device) # Time steps for each sequence in the batch
-
-    # Create masked data x_t
-    x_t, _, _ = create_masked_data(x_0, t)
-
-    # Calculate loss
-    loss = model.loss_fn(x_0, x_t, t)
-
-    # Backpropagation
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
-
-    return loss.item()
-
-def evaluate_step(model: LLaDA, batch: Dict[str, torch.Tensor], device: torch.device) -> float:
-    """
-    Performs a single evaluation step.
-
-    Args:
-        model: The LLaDA model.
-        batch: A dictionary containing the evaluation data ('x_0', 't').
-        device: The device to perform computations on.
-
-    Returns:
-        The loss for this evaluation step.
-    """
-    model.eval()
-    x_0 = batch['x_0'].to(device)
-    t = batch['t'].to(device)
-
-    # Create masked data x_t
-    x_t, _, _ = create_masked_data(x_0, t)
-
-    with torch.no_grad():
-        loss = model.loss_fn(x_0, x_t, t)
-
-    return loss.item()
-
-def generate_sample(model: LLaDA, prompt_tokens: torch.Tensor, num_steps: int, device: torch.device) -> torch.Tensor:
-    """
-    Generates a sample using the LLaDA model.
-
-    Args:
-        model: The LLaDA model.
-        prompt_tokens: The initial prompt tokens. Shape: (batch_size, sequence_length)
-        num_steps: The number of reverse diffusion steps.
-        device: The device to perform computations on.
-
-    Returns:
-        The generated sequence tokens. Shape: (batch_size, sequence_length)
-    """
-    model.eval()
-    prompt_tokens = prompt_tokens.to(device)
-    generated_tokens = model.sample(prompt_tokens, num_steps=num_steps)
-    return generated_tokens
-
-def evaluate_likelihood(model: LLaDA, prompt: torch.Tensor, response: torch.Tensor, n_mc: int, device: torch.device) -> float:
-    """
-    Evaluates the conditional log-likelihood of a response given a prompt.
-
-    Args:
-        model: The LLaDA model.
-        prompt: The prompt tokens. Shape: (batch_size, sequence_length)
-        response: The response tokens. Shape: (batch_size, sequence_length)
-        n_mc: Number of Monte Carlo samples.
-        device: The device to perform computations on.
-
-    Returns:
-        The average conditional log-likelihood.
-    """
-    model.eval()
-    prompt = prompt.to(device)
-    response = response.to(device)
-    likelihood = model.evaluate_conditional_likelihood(prompt, response, n_mc=n_mc)
-    return likelihood
-
-# --- Example Usage ---
 if __name__ == "__main__":
-    # Configuration
-    VOCAB_SIZE = 10000
-    D_MODEL = 256
-    NHEAD = 8
-    NUM_LAYERS = 4
-    DIM_FEEDFORWARD = 512
-    DROPOUT = 0.1
-    BATCH_SIZE = 4
-    SEQ_LEN = 64
-    NUM_REVERSE_STEPS = 100 # For sampling
-    NUM_MC_ESTIMATIONS = 5 # For likelihood evaluation
+    # Dummy data for demonstration
+    class DummyDataset(torch.utils.data.Dataset):
+        def __init__(self, size=100, seq_len=50, is_paired=False):
+            self.size = size
+            self.seq_len = seq_len
+            self.is_paired = is_paired
+            self.vocab_size = VOCAB_SIZE
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        def __len__(self):
+            return self.size
 
-    # Initialize Model
-    model = LLaDA(
-        vocab_size=VOCAB_SIZE,
-        d_model=D_MODEL,
-        nhead=NHEAD,
-        num_layers=NUM_LAYERS,
-        dim_feedforward=DIM_FEEDFORWARD,
-        dropout=DROPOUT
-    ).to(device)
+        def __getitem__(self, idx):
+            if self.is_paired:
+                # For SFT: (prompt, response)
+                prompt_len = np.random.randint(10, 30)
+                prompt = torch.randint(0, self.vocab_size, (prompt_len,))
+                response_len = np.random.randint(20, self.seq_len)
+                response = torch.randint(0, self.vocab_size, (response_len,))
+                return prompt, response
+            else:
+                # For pre-training: original sequence x0
+                return torch.randint(0, self.vocab_size, (self.seq_len,))
 
-    # Initialize Optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    dummy_pretrain_dataset = DummyDataset(size=1000, seq_len=128)
+    dummy_pretrain_loader = torch.utils.data.DataLoader(dummy_pretrain_dataset, batch_size=32)
 
-    # --- Dummy Data for Demonstration ---
-    # In a real scenario, you would load your dataset here.
-    dummy_x_0 = torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, SEQ_LEN))
-    dummy_t = torch.rand(BATCH_SIZE) # Random time steps for the batch
+    dummy_sft_dataset = DummyDataset(size=500, seq_len=128, is_paired=True)
+    dummy_sft_loader = torch.utils.data.DataLoader(dummy_sft_dataset, batch_size=16)
 
-    dummy_batch = {'x_0': dummy_x_0, 't': dummy_t}
+    dummy_gsm8k_dataset = [{"question": f"Math problem {i}", "answer": str(i*2)} for i in range(10)] # Dummy iGSM data
 
-    # --- Training Step Example ---
-    print("Running a dummy training step...")
-    train_loss = train_step(model, optimizer, dummy_batch, device)
-    print(f"Dummy Training Loss: {train_loss:.4f}")
+    # Initialize LLaDA model
+    llada_model = LLaDA()
 
-    # --- Evaluation Step Example ---
-    print("Running a dummy evaluation step...")
-    eval_loss = evaluate_step(model, dummy_batch, device)
-    print(f"Dummy Evaluation Loss: {eval_loss:.4f}")
+    print("Starting pre-training...")
+    # llada_model.pre_train(dummy_pretrain_loader, epochs=1) # Run for a few epochs for demonstration
 
-    # --- Sampling Example ---
-    print("Running a dummy sampling process...")
-    # Create a dummy prompt (can be partially masked or just a starting sequence)
-    dummy_prompt = torch.randint(0, VOCAB_SIZE, (1, SEQ_LEN)) # Batch size 1 for sampling example
-    generated_sequence = generate_sample(
+    print("\nStarting supervised fine-tuning...")
+    # llada_model.fine_tune(dummy_sft_loader, epochs=1) # Run for a few epochs for demonstration
+
+    print("\nEvaluating conditional likelihood...")
+    # Example for conditional likelihood evaluation
+    dummy_prompt = torch.randint(0, VOCAB_SIZE, (50,))
+    dummy_response = torch.randint(0, VOCAB_SIZE, (100,))
+    # likelihood = llada_model.evaluate_conditional_likelihood(dummy_prompt, dummy_response)
+    # print(f"Dummy conditional log-likelihood: {likelihood}")
+
+    print("\nGenerating text with low-confidence remasking...")
+    # generated_text_lc = llada_model.generate_text("The quick brown fox", sampling_strategy="low_confidence")
+    # print(f"Generated text (low-confidence): {generated_text_lc}")
+
+    print("\nGenerating text with random remasking...")
+    # generated_text_rand = llada_model.generate_text("The quick brown fox", sampling_strategy="random_remasking")
+    # print(f"Generated text (random): {generated_text_rand}")
+
+    print("\nEvaluating on iGSM dataset (placeholder)...")
+    # llada_model.evaluate_gsm8k(dummy_gsm8k_dataset)
+
+    print("\nLLaDA model structure and methods defined.")
