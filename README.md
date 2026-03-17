@@ -13,7 +13,7 @@ flowchart TD
     A(["User Input\narXiv ID / Title / PDF"]) --> B["Planner\nQuery FAISS memory\nDecompose subtasks\nAuto-download PDF"]
     B --> C["Researcher\narXiv · Semantic Scholar\nTavily · Local RAG"]
     B --> D["Coder\nPDF parse → algo extract\nCode skeleton · Mermaid\nGitHub search"]
-    C --> E["Reviewer\nLLM-as-Judge\nalgo×0.4 + code×0.35 + diagram×0.25"]
+    C --> E["Reviewer\nLLM-as-Judge · 3 dimensions"]
     D --> E
     E -->|"score ≥ 6"| F["Reporter\nWrite review + diagram + code\nSave to FAISS memory"]
     E -->|"score < 6\niter < 3"| D
@@ -38,7 +38,7 @@ flowchart TD
 ## Installation
 
 ```bash
-git clone https://github.com/your-username/papercoder.git
+git clone https://github.com/hhc2002/papercoder.git
 cd papercoder
 pip install -r papercoder/requirements.txt
 cp papercoder/.env.example papercoder/.env
