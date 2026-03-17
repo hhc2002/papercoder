@@ -1,0 +1,39 @@
+# 环境变量（含 API keys，绝不提交）
+papercoder/.env
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# 本地数据（自动生成，无需提交）
+papercoder/chroma_db/
+papercoder/memory_store/
+papercoder/papers/
+
+# 输出（用户生成结果）
+papercoder/output/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# LangChain cache
+.langchain.db
+langchain_cache/
+papers/
+*.code-workspace
